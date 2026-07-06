@@ -1,76 +1,114 @@
-# 🎙️ Meeting Reader — Step A
+# 🎙️ Meeting Reader
 
-Upload a meeting recording → get a **transcript** + an **AI summary**
-(summary, key points, decisions, action items).
+A self-built **"Read AI" clone**. Upload a meeting recording and get:
 
-**Stack:** Groq Whisper (transcription) · LangChain + Groq LLM `openai/gpt-oss-120b` (summary) · FastAPI (web UI)
+- 📝 a **transcript** with **speaker labels** ("who said what")
+- 🧠 an **AI summary** — Summary, Key Points, Decisions, Action Items
+- 📧 the summary **emailed** to any address
+
+> 📋 For the full roadmap, architecture, and future plans, see **[PROJECT_PLAN.md](PROJECT_PLAN.md)**.
 
 ---
 
-## What each file does
+## How it works
+
+```
+Browser  ──audio + email──►  FastAPI
+                              │
+                              ├─ 1. Groq Whisper      → timed transcript
+                              ├─ 2. Groq LLM (diarize)→ Speaker 1 / Speaker 2…
+                              ├─ 3. Groq LLM (summary)→ markdown summary
+                              └─ 4. Gmail SMTP        → email to user
+```
+
+**Stack:** Groq Whisper · LangChain + Groq LLM (`openai/gpt-oss-120b`) · FastAPI · Gmail SMTP
+
+---
+
+## Files
 
 | File | Purpose |
 |------|---------|
-| `transcribe.py` | Audio → text using Groq Whisper |
-| `summarize.py`  | Transcript → summary using **LangChain** (`ChatGroq`) |
-| `app.py`        | Web page: upload → transcribe → summarize → show |
-| `.env`          | Your Groq API key + model names (never share this) |
-| `requirements.txt` | Python packages |
+| `app.py` | Web app: upload → transcribe → diarize → summarize → email |
+| `transcribe.py` | Audio → text (Groq Whisper), plain + timed-segment versions |
+| `diarize.py` | Adds speaker labels using the LLM + pause gaps (Path A) |
+| `summarize.py` | Transcript → summary via **LangChain** `ChatGroq` |
+| `send_email.py` | Emails the summary via **Gmail SMTP** |
+| `.env` | API keys + model config (**never commit this**) |
+| `PROJECT_PLAN.md` | Full plan, architecture, roadmap |
 
 ---
 
 ## Setup (one time)
 
-Open PowerShell in this folder and run:
+Open PowerShell in this folder:
 
 ```powershell
-# 1. Create a virtual environment
 python -m venv venv
-
-# 2. Activate it
 .\venv\Scripts\Activate.ps1
-
-# 3. Install packages
 pip install -r requirements.txt
 ```
 
-> If step 2 gives a "running scripts is disabled" error, run this once, then retry:
+> If activation is blocked, run once then retry:
 > `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`
+
+### Configure `.env`
+
+Copy `.env.example` → `.env` and fill in:
+
+```ini
+GROQ_API_KEY=your_groq_key           # https://console.groq.com/keys
+WHISPER_MODEL=whisper-large-v3       # or whisper-large-v3-turbo (faster)
+LLM_MODEL=openai/gpt-oss-120b
+GMAIL_ADDRESS=you@gmail.com          # sender
+GMAIL_APP_PASSWORD=xxxx xxxx xxxx xxxx   # Google "App password", NOT your login password
+```
+
+> **Gmail App Password:** enable 2-Step Verification → Google Account → Security →
+> App passwords → generate one for "Mail".
 
 ---
 
-## Run it
+## Run
 
 ```powershell
 uvicorn app:app --reload
 ```
 
-Then open **http://127.0.0.1:8000** in your browser, pick an audio file, and click
-**Transcribe & Summarize**.
+Open **http://127.0.0.1:8000**, upload a recording, enter an email, and click
+**Transcribe, Summarize & Email**.
 
 ---
 
-## Test the pieces on their own (optional)
+## Test the pieces individually
 
 ```powershell
-python transcribe.py "C:\path\to\meeting.mp3"   # prints the transcript
-python summarize.py                              # runs a tiny built-in sample
+python transcribe.py "uploads\test.wav"   # prints transcript
+python diarize.py                          # built-in speaker-labeling demo
+python summarize.py                        # built-in summary sample
+python send_email.py you@example.com       # sends a test email
 ```
 
 ---
 
-## Notes & limits
+## Limits to know
 
-- Groq's free tier caps audio uploads at **~25 MB**. For bigger files you'll later
-  need to split the audio into chunks (a future step).
-- Supported audio: mp3, m4a, wav, mp4, and more.
-- **Security:** your API key is in `.env`. Since it was shared in chat, regenerate it
-  at https://console.groq.com/keys after testing. `.gitignore` keeps `.env` out of git.
+- **Audio ≤ ~25 MB** (Groq free tier) ≈ 20–25 min of MP3. Bigger files need **chunking** (planned).
+- Use **MP3 / M4A**, not WAV (WAV is huge — ~2–3 min hits the limit).
+- Speaker labels are **inferred by the LLM**, not true voice fingerprinting (good for meetings; upgradeable to `pyannote` later).
+- Gmail free sending cap ≈ **500 emails/day**.
 
 ---
 
-## What's next (from our plan)
+## Security
 
-- **Step B:** record audio locally (mic + system audio) instead of uploading.
-- **Step C:** a bot that auto-joins Zoom/Meet/Teams.
-- Nice-to-haves: speaker labels ("who said what"), save results to a database, email the summary.
+- All secrets live in `.env`, which is **git-ignored**.
+- The keys used during setup were shared in chat — **rotate them** when done:
+  Groq key at https://console.groq.com/keys, and regenerate the Gmail App Password.
+
+---
+
+## What's next
+
+See **[PROJECT_PLAN.md](PROJECT_PLAN.md)**. Immediate next step: **chunking** so long
+meetings (>25 min) work, then local recording (Approach B) and a meeting bot (Approach C).

@@ -27,6 +27,29 @@ def transcribe(audio_path: str) -> str:
     return result if isinstance(result, str) else result.text
 
 
+# same transcription but returns timed segments -> [{"start":.., "end":.., "text":..}]
+# the pauses between segments are the best clue for "who is speaking" (diarization)
+def transcribe_segments(audio_path: str) -> list[dict]:
+    with open(audio_path, "rb") as f:
+        result = client.audio.transcriptions.create(
+            file=(os.path.basename(audio_path), f.read()),
+            model=WHISPER_MODEL,
+            response_format="verbose_json",  # gives per-segment timestamps
+        )
+
+    segments = getattr(result, "segments", None) or []
+    out = []
+    for s in segments:
+        # SDK segments behave like objects; fall back to dict access just in case
+        get = (lambda k: getattr(s, k, None)) if not isinstance(s, dict) else s.get
+        out.append({
+            "start": round(float(get("start") or 0.0), 2),
+            "end": round(float(get("end") or 0.0), 2),
+            "text": (get("text") or "").strip(),
+        })
+    return out
+
+
 if __name__ == "__main__":
     # manual test:  
     # python transcribe.py path\to\audio.mp3
