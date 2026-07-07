@@ -6,11 +6,13 @@
 import os
 import uuid
 import html
+import base64
 
+import markdown as md
 from fastapi import FastAPI, UploadFile, File, Form
 from fastapi.responses import HTMLResponse
 
-from transcribe import transcribe, transcribe_segments
+from transcribe import transcribe, transcribe_segments_auto
 from diarize import diarize
 from summarize import summarize
 from send_email import send_summary_email
@@ -54,6 +56,16 @@ PAGE = """
 """
 
 
+# build a client-side download link (no server storage needed) from text content
+def _download_link(filename: str, text: str, label: str) -> str:
+    b64 = base64.b64encode(text.encode("utf-8")).decode("ascii")
+    return (
+        f'<a download="{filename}" href="data:text/plain;charset=utf-8;base64,{b64}" '
+        f'style="display:inline-block;margin:4px 8px 4px 0;padding:8px 14px;background:#eef;'
+        f'color:#4f46e5;text-decoration:none;border-radius:8px;font-size:14px;">{label}</a>'
+    )
+
+
 @app.get("/", response_class=HTMLResponse)
 def home():
     return PAGE.format(result="")
@@ -69,8 +81,8 @@ async def process(file: UploadFile = File(...), email: str = Form(...)):
         f.write(await file.read())
 
     try:
-        # transcribe with timestamps, then label speakers (path A diarization)
-        segments = transcribe_segments(saved_path)
+        # transcribe with timestamps (auto-chunks long files), then label speakers
+        segments = transcribe_segments_auto(saved_path)
         try:
             transcript = diarize(segments) if segments else transcribe(saved_path)
         except Exception:
@@ -84,10 +96,10 @@ async def process(file: UploadFile = File(...), email: str = Form(...)):
         # summarize (LangChain + Groq LLM)
         summary = summarize(transcript)
 
-        # email the summary to the user (step 3)
+        # email the summary + attach the transcript (step 3)
         email_note = ""
         try:
-            send_summary_email(email, summary)
+            send_summary_email(email, summary, transcript)
             email_note = f'<p style="color:green">✅ Summary emailed to {html.escape(email)}</p>'
         except Exception as mail_err:
             email_note = f'<p style="color:#b00">⚠️ Could not send email: {html.escape(str(mail_err))}</p>'
@@ -100,11 +112,18 @@ async def process(file: UploadFile = File(...), email: str = Form(...)):
         if os.path.exists(saved_path):
             os.remove(saved_path)
 
+    summary_html = md.markdown(summary, extensions=["extra", "sane_lists"])
+    downloads = (
+        _download_link("summary.md", summary, "⬇️ Download summary")
+        + _download_link("transcript.txt", transcript, "⬇️ Download transcript")
+    )
+
     result = f"""
     <div class="card">
       {email_note}
+      <div>{downloads}</div>
       <h2>Summary</h2>
-      <pre>{html.escape(summary)}</pre>
+      {summary_html}
     </div>
     <div class="card">
       <h2>Full Transcript</h2>

@@ -4,7 +4,7 @@
 > speaker labels, an AI summary, and emails it out.
 > This document is the **master reference** for all future development.
 
-Last updated: 2026-07-02
+Last updated: 2026-07-06
 
 ---
 
@@ -37,7 +37,7 @@ Only the *audio input path* changes.
 
 ```
                           ┌───────────────────────────────────────────────┐
-  ┌──────────┐  upload    │                 FastAPI (app.py)               │
+  ┌──────────┐  upload    │                 FastAPI (app.py)              │
   │  Browser │  audio +   │                                               │
   │  (form)  │──email────►│  1. save file to uploads/                     │
   │          │            │  2. transcribe_segments()  ── Groq Whisper ──►│  timed segments
@@ -65,11 +65,13 @@ Only the *audio input path* changes.
 
 | File | Responsibility | Key functions |
 |------|----------------|---------------|
-| `app.py` | FastAPI web app: upload UI, orchestrates the pipeline | `home()`, `process()` |
-| `transcribe.py` | Audio → text via Groq Whisper | `transcribe()`, `transcribe_segments()` |
+| `app.py` | FastAPI web app: upload UI, orchestrates the pipeline, download links | `home()`, `process()`, `_download_link()` |
+| `transcribe.py` | Audio → text via Groq Whisper (auto-chunks long files) | `transcribe()`, `transcribe_segments()`, `transcribe_segments_auto()` |
 | `diarize.py` | Add speaker labels via Groq LLM (Path A) | `diarize()`, `_format_segments()` |
 | `summarize.py` | Transcript → summary via LangChain `ChatGroq` | `summarize()` |
-| `send_email.py` | Email the summary via Gmail SMTP | `send_summary_email()` |
+| `send_email.py` | Email a styled summary + transcript attachment via Gmail SMTP | `send_summary_email()` |
+| `groq_pool.py` | Pool of Groq keys with auto-rotation on rate limits | `get_keys()`, `run_with_rotation()` |
+| `chunk_audio.py` | Split long audio into chunks (bundled ffmpeg) | `needs_chunking()`, `split_audio()`, `with_chunks()` |
 | `.env` | Secrets + model config (git-ignored) | — |
 | `requirements.txt` | Python dependencies | — |
 | `uploads/` | Temporary audio storage (cleared after each run) | — |
@@ -95,7 +97,8 @@ Only the *audio input path* changes.
 
 | Variable | Purpose | Example |
 |----------|---------|---------|
-| `GROQ_API_KEY` | Groq Cloud key (transcription + LLM) | `gsk_...` |
+| `GROQ_API_KEYS` | One or more Groq keys, comma-separated (auto-rotates on limits) | `gsk_a,gsk_b,gsk_c` |
+| `GROQ_API_KEY` | Single-key fallback (still supported) | `gsk_...` |
 | `WHISPER_MODEL` | Whisper model | `whisper-large-v3` (or `-turbo` for speed) |
 | `LLM_MODEL` | Summary/diarize model | `openai/gpt-oss-120b` |
 | `GMAIL_ADDRESS` | Sender Gmail/Workspace address | `you@domain.com` |
@@ -113,12 +116,15 @@ Only the *audio input path* changes.
 - [x] Speaker labels via LLM (Path A diarization)
 - [x] Robustness: empty-output guards + fallbacks
 
-### 🥇 Tier 1 — Polish the current app (NEXT)
-- [ ] **Chunking for long meetings** — split audio >25 MB / >25 min, transcribe each chunk, stitch text. *(Highest priority — removes the biggest limit.)*
-- [ ] **Include labeled transcript in the email** (currently email has summary only).
-- [ ] **Download summary/transcript** as `.txt` / `.md` / PDF.
-- [ ] **Progress + logging** — show status ("Transcribing… Summarizing…") and log transcript length while developing.
+### 🥇 Tier 1 — Polish the current app
+- [x] **Chunking for long meetings** — auto-splits big files into 10-min chunks, transcribes each, stitches timestamps. (`chunk_audio.py`)
+- [x] **Multi-key rotation** — several Groq keys in `.env`, auto-rotate on rate limits. (`groq_pool.py`)
+- [x] **Include transcript in the email** — attached as `transcript.txt`.
+- [x] **Download summary/transcript** — download buttons on the results page.
+- [x] **Beautiful email** — styled HTML template (markdown-rendered).
+- [ ] **Progress + logging** — show status ("Transcribing… Summarizing…") and log transcript length while developing. *(NEXT)*
 - [ ] **File-size / type pre-check** — warn before uploading something too big.
+- [ ] **Download as PDF** (currently `.md` / `.txt`).
 
 ### 🥈 Tier 2 — New input method (Approach B: local recording)
 - [ ] Capture mic + system audio (browser `MediaRecorder` or a small Electron/desktop app).
@@ -166,7 +172,8 @@ Only the *audio input path* changes.
 
 | Limit | Detail | Fix (planned) |
 |-------|--------|---------------|
-| **File size** | Groq free tier rejects audio > ~25 MB (~20–25 min) | Chunking (Tier 1) |
+| ~~File size~~ | ~~Groq rejects audio > ~25 MB~~ | ✅ Fixed — auto-chunking |
+| ~~Rate limits~~ | ~~one key runs out~~ | ✅ Fixed — multi-key rotation |
 | **Diarization accuracy** | LLM *infers* speakers; not true voice fingerprinting | pyannote (Tier 4) |
 | **No persistence** | Results vanish after the page/email | Database (Tier 4) |
 | **Email = summary only** | Labeled transcript not emailed yet | Tier 1 |
@@ -198,15 +205,23 @@ Only the *audio input path* changes.
 
 ---
 
-## 11. Immediate next step (for tomorrow)
+## 11. Immediate next step
 
-**Start Tier 1 → Chunking for long meetings.** Suggested approach:
-1. If file > ~20 MB or audio > ~20 min, split into ~15-min chunks (use `pydub` or `ffmpeg`).
-2. `transcribe_segments()` each chunk; offset each chunk's timestamps by the chunk start.
-3. Concatenate all segments → run `diarize()` once → `summarize()` once.
-4. Guard against the LLM's token limits on very long transcripts (may need map-reduce summarization via LangChain).
+Most of Tier 1 is now done (chunking, multi-key rotation, downloads, beautiful email).
+Remaining Tier 1 polish:
+1. **Progress + logging** — surface "Transcribing… Diarizing… Summarizing…" to the user
+   (e.g. via a status endpoint or streaming), and log transcript length while developing.
+2. **File-size / type pre-check** — warn in the browser before uploading something huge.
+3. **PDF download** — add a PDF export option alongside `.md` / `.txt`.
 
-Then continue down Tier 1 (email transcript, downloads, logging).
+After that, move to **Tier 2 — Approach B (local recording)**: capture mic + system audio
+in the browser (`MediaRecorder`) and POST it to the existing `/process` pipeline.
+
+### Watch-outs for very long meetings (already chunked)
+- Diarize/summary LLM calls have a token ceiling; a multi-hour transcript may still be large.
+  If it ever fails, add **map-reduce summarization** (summarize each chunk, then summarize the
+  summaries) via LangChain.
+- Chunk boundaries can split a sentence; a small overlap between chunks would improve accuracy.
 
 
 

@@ -1,7 +1,6 @@
 # step 2
 # convert the transcript into a meeting summary
-# done via gpt oss via groq cloud
-
+# done via gpt-oss via groq cloud (with automatic key rotation)
 
 import os
 from dotenv import load_dotenv
@@ -9,14 +8,13 @@ from langchain_groq import ChatGroq
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 
+from groq_pool import run_with_rotation
+
 load_dotenv()
 
 LLM_MODEL = os.getenv("LLM_MODEL", "openai/gpt-oss-120b")
 
-# low temperature to keep it factual not cretive
-llm = ChatGroq(model=LLM_MODEL, temperature=0.2)
-
-#instruction
+# instruction
 prompt = ChatPromptTemplate.from_messages(
     [
         (
@@ -33,13 +31,16 @@ prompt = ChatPromptTemplate.from_messages(
     ]
 )
 
-# chain:  prompt -> LLM -> plain string
-chain = prompt | llm | StrOutputParser()
-
 
 def summarize(transcript: str) -> str:
     """Return a Markdown summary of the given transcript."""
-    return chain.invoke({"transcript": transcript})
+    def call(api_key: str):
+        # low temperature to keep it factual, not creative
+        llm = ChatGroq(model=LLM_MODEL, temperature=0.2, api_key=api_key)
+        chain = prompt | llm | StrOutputParser()
+        return chain.invoke({"transcript": transcript})
+
+    return run_with_rotation(call)
 
 
 if __name__ == "__main__":

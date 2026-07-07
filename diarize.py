@@ -9,13 +9,11 @@ from langchain_groq import ChatGroq
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 
+from groq_pool import run_with_rotation
+
 load_dotenv()
 
 LLM_MODEL = os.getenv("LLM_MODEL", "openai/gpt-oss-120b")
-
-# temperature=0 -> most consistent / deterministic labeling
-# max_tokens high so long transcripts aren't truncated to empty
-llm = ChatGroq(model=LLM_MODEL, temperature=0, max_tokens=16000)
 
 prompt = ChatPromptTemplate.from_messages(
     [
@@ -39,9 +37,6 @@ prompt = ChatPromptTemplate.from_messages(
         ("human", "Timed transcript:\n\n{segments}"),
     ]
 )
-
-chain = prompt | llm | StrOutputParser()
-
 
 def _mmss(seconds: float) -> str:
     m, s = divmod(int(seconds), 60)
@@ -70,8 +65,16 @@ def diarize(segments: list[dict]) -> str:
         return ""
 
     plain = " ".join(s["text"] for s in segments).strip()
+    formatted = _format_segments(segments)
+
+    def call(api_key: str):
+        # temperature=0 = consistent labels; high max_tokens so long transcripts aren't cut off
+        llm = ChatGroq(model=LLM_MODEL, temperature=0, max_tokens=16000, api_key=api_key)
+        chain = prompt | llm | StrOutputParser()
+        return chain.invoke({"segments": formatted}).strip()
+
     try:
-        labeled = chain.invoke({"segments": _format_segments(segments)}).strip()
+        labeled = run_with_rotation(call)
     except Exception:
         return plain
     return labeled if labeled else plain

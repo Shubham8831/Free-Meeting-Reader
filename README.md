@@ -4,7 +4,10 @@ A self-built **"Read AI" clone**. Upload a meeting recording and get:
 
 - 📝 a **transcript** with **speaker labels** ("who said what")
 - 🧠 an **AI summary** — Summary, Key Points, Decisions, Action Items
-- 📧 the summary **emailed** to any address
+- 📧 a **beautifully formatted email** with the transcript attached
+- ⬇️ **download** buttons for the summary and transcript
+- ♾️ **long meetings** handled via automatic audio **chunking**
+- 🔑 **multiple Groq keys** with auto-rotation when one hits its limit
 
 > 📋 For the full roadmap, architecture, and future plans, see **[PROJECT_PLAN.md](PROJECT_PLAN.md)**.
 
@@ -29,11 +32,13 @@ Browser  ──audio + email──►  FastAPI
 
 | File | Purpose |
 |------|---------|
-| `app.py` | Web app: upload → transcribe → diarize → summarize → email |
-| `transcribe.py` | Audio → text (Groq Whisper), plain + timed-segment versions |
+| `app.py` | Web app: upload → transcribe → diarize → summarize → email + downloads |
+| `transcribe.py` | Audio → text (Groq Whisper); auto-chunks long files |
 | `diarize.py` | Adds speaker labels using the LLM + pause gaps (Path A) |
 | `summarize.py` | Transcript → summary via **LangChain** `ChatGroq` |
-| `send_email.py` | Emails the summary via **Gmail SMTP** |
+| `send_email.py` | Emails a styled summary + attaches the transcript (**Gmail SMTP**) |
+| `groq_pool.py` | Pool of Groq keys, auto-rotates on rate limits |
+| `chunk_audio.py` | Splits long audio into chunks (bundled ffmpeg) |
 | `.env` | API keys + model config (**never commit this**) |
 | `PROJECT_PLAN.md` | Full plan, architecture, roadmap |
 
@@ -57,12 +62,16 @@ pip install -r requirements.txt
 Copy `.env.example` → `.env` and fill in:
 
 ```ini
-GROQ_API_KEY=your_groq_key           # https://console.groq.com/keys
-WHISPER_MODEL=whisper-large-v3       # or whisper-large-v3-turbo (faster)
+# one or more Groq keys, comma-separated -> auto-rotates when one hits its limit
+GROQ_API_KEYS=gsk_key1,gsk_key2,gsk_key3   # https://console.groq.com/keys
+WHISPER_MODEL=whisper-large-v3             # or whisper-large-v3-turbo (faster)
 LLM_MODEL=openai/gpt-oss-120b
-GMAIL_ADDRESS=you@gmail.com          # sender
-GMAIL_APP_PASSWORD=xxxx xxxx xxxx xxxx   # Google "App password", NOT your login password
+GMAIL_ADDRESS=you@gmail.com                # sender
+GMAIL_APP_PASSWORD=xxxx xxxx xxxx xxxx     # Google "App password", NOT your login password
 ```
+
+> 💡 **Rate limits:** add several free Groq keys to `GROQ_API_KEYS` (comma-separated).
+> When one key hits its daily/rate limit, the app automatically switches to the next.
 
 > **Gmail App Password:** enable 2-Step Verification → Google Account → Security →
 > App passwords → generate one for "Mail".
@@ -93,10 +102,10 @@ python send_email.py you@example.com       # sends a test email
 
 ## Limits to know
 
-- **Audio ≤ ~25 MB** (Groq free tier) ≈ 20–25 min of MP3. Bigger files need **chunking** (planned).
-- Use **MP3 / M4A**, not WAV (WAV is huge — ~2–3 min hits the limit).
+- **Long meetings are handled** — files over ~20 MB are auto-split into 10-min chunks, transcribed, and stitched. (No manual ffmpeg install needed; it's bundled.)
 - Speaker labels are **inferred by the LLM**, not true voice fingerprinting (good for meetings; upgradeable to `pyannote` later).
 - Gmail free sending cap ≈ **500 emails/day**.
+- Very long (multi-hour) transcripts may still stress the LLM's token limit — see `PROJECT_PLAN.md` §11 for the map-reduce fallback plan.
 
 ---
 

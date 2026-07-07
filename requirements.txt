@@ -5,3 +5,5 @@ python-dotenv>=1.0
 groq>=0.15
 langchain>=0.3
 langchain-groq>=0.2
+imageio-ffmpeg>=0.5
+markdown>=3.7
